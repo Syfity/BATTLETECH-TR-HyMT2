@@ -1,0 +1,27 @@
+name: Hy-MT2 Model Cache Keepalive
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 4 * * 1,4'
+
+permissions:
+  contents: read
+
+env:
+  MODEL_CACHE_KEY: hymt2-7b-q8-7981928896-v1
+
+jobs:
+  touch-model-cache:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Hy-MT2 model cache erişimini yenile
+        uses: actions/cache@v4
+        with:
+          path: model/HY-MT2-7B-Q8_0.gguf
+          key: ${{ env.MODEL_CACHE_KEY }}
+          fail-on-cache-miss: true
+      - name: Cache doğrula
+        run: |
+          test "$(stat -c%s model/HY-MT2-7B-Q8_0.gguf)" = "7981928896"
+          echo "Hy-MT2 model cache aktif ve doğrulandı."

@@ -1,0 +1,29 @@
+{
+  "game_name": "GAME_NAME",
+  "source_language": "English",
+  "target_language": "Turkish",
+  "input_path": "input/source.csv",
+  "output_path": "output/GAME_NAME_TR.csv",
+  "format": "auto",
+  "shards": 40,
+  "context_path": "config/context.md",
+  "glossary_path": "config/glossary.json",
+  "skip_key_prefixes": ["(HIDDEN)", "(DEBUG)", "(DEBUGMODE)"],
+  "skip_value_prefixes": ["(HIDDEN)", "(DEBUG)"],
+  "skip_regex": [],
+  "format_options": {
+    "source_field": "source",
+    "target_field": "source",
+    "id_field": "key",
+    "delimiter": "auto",
+    "header_row": 1,
+    "sheet_names": "*",
+    "source_column": null,
+    "target_column": null,
+    "translatable_keys": ["text", "name", "description", "title", "value"],
+    "txt_mode": "whole_line",
+    "text_regex": null,
+    "translatable_tags": [],
+    "translatable_attributes": []
+  }
+}
