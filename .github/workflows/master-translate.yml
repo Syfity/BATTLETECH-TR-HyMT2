@@ -25,6 +25,8 @@ jobs:
       shards: ${{ steps.matrix.outputs.shards }}
     steps:
       - uses: actions/checkout@v4
+      - name: Master çeviri motorunu aç
+        run: unzip -o .master/engine.zip -d .
       - name: Python bağımlılıkları
         run: python3 -m pip install -r requirements.txt
       - name: İş yapılandırmasını ve kaynak dosyayı analiz et
@@ -100,6 +102,8 @@ jobs:
     timeout-minutes: 355
     steps:
       - uses: actions/checkout@v4
+      - name: Master çeviri motorunu aç
+        run: unzip -o .master/engine.zip -d .
       - uses: actions/download-artifact@v4
         with:
           name: prepared-work
@@ -156,6 +160,8 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
+      - name: Master çeviri motorunu aç
+        run: unzip -o .master/engine.zip -d .
       - name: Python bağımlılıkları
         run: python3 -m pip install -r requirements.txt
       - uses: actions/download-artifact@v4
