@@ -1,0 +1,166 @@
+name: BATTLETECH Hy-MT2 Türkçe Çeviri
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'input/strings_de-DE.csv'
+
+permissions:
+  contents: read
+
+env:
+  MODEL_FILE: model/HY-MT2-7B-Q8_0.gguf
+  MODEL_URL: https://huggingface.co/tencent/Hy-MT2-7B-GGUF/resolve/main/HY-MT2-7B-Q8_0.gguf?download=true
+  MODEL_SIZE: '7981928896'
+  SHARDS: '40'
+
+jobs:
+  prepare-model:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Hy-MT2-7B Q8_0 model önbelleği
+        id: model-cache
+        uses: actions/cache@v4
+        with:
+          path: model/HY-MT2-7B-Q8_0.gguf
+          key: hymt2-7b-q8-7981928896-v1
+      - name: Modeli indir ve doğrula
+        if: steps.model-cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p model
+          curl -fL --retry 8 --retry-delay 10 --connect-timeout 30 \
+            -o "$MODEL_FILE" "$MODEL_URL"
+          test "$(stat -c%s "$MODEL_FILE")" = "$MODEL_SIZE"
+
+  translate:
+    needs: prepare-model
+    strategy:
+      fail-fast: false
+      max-parallel: 20
+      matrix:
+        shard: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39]
+    runs-on: ubuntu-latest
+    timeout-minutes: 355
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Kaynak CSV yapısını doğrula
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import csv
+          p='input/strings_de-DE.csv'
+          with open(p,encoding='utf-8',newline='') as f:
+              r=csv.DictReader(f); rows=list(r)
+          assert r.fieldnames == ['KEY','de-DE'], r.fieldnames
+          assert len(rows) == 21369, len(rows)
+          print('Kaynak doğrulandı:', len(rows), 'kayıt')
+          PY
+
+      - name: Hy-MT2 model önbelleğini yükle
+        uses: actions/cache@v4
+        with:
+          path: model/HY-MT2-7B-Q8_0.gguf
+          key: hymt2-7b-q8-7981928896-v1
+          fail-on-cache-miss: true
+
+      - name: llama.cpp kur
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential cmake libcurl4-openssl-dev
+          git clone --depth 1 https://github.com/ggml-org/llama.cpp.git
+          cmake -S llama.cpp -B llama.cpp/build -DLLAMA_CURL=ON -DCMAKE_BUILD_TYPE=Release
+          cmake --build llama.cpp/build -j4 --target llama-server
+          sudo cp llama.cpp/build/bin/llama-server /usr/local/bin/llama-server
+
+      - name: Hy-MT2 sunucusunu başlat
+        shell: bash
+        run: |
+          set -euo pipefail
+          llama-server -m "$MODEL_FILE" --host 127.0.0.1 --port 8080 \
+            --jinja -ngl 0 -t 4 -tb 4 -c 8192 -np 2 \
+            > "llama-server-${{ matrix.shard }}.log" 2>&1 &
+          echo $! > llama-server.pid
+          for i in $(seq 1 120); do
+            if curl -fsS http://127.0.0.1:8080/health >/dev/null 2>&1; then
+              echo 'llama-server hazır'; exit 0
+            fi
+            if ! kill -0 "$(cat llama-server.pid)" 2>/dev/null; then
+              cat "llama-server-${{ matrix.shard }}.log"; exit 1
+            fi
+            sleep 5
+          done
+          cat "llama-server-${{ matrix.shard }}.log"
+          exit 1
+
+      - name: Çeviri + ikinci kalite kontrolü
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 translate.py \
+            --input input/strings_de-DE.csv \
+            --glossary glossary_battletech_tr.json \
+            --server http://127.0.0.1:8080 \
+            --shard "${{ matrix.shard }}" --shards "$SHARDS" \
+            --workers 2 \
+            --cache "cache-${{ matrix.shard }}.jsonl" \
+            --failures "failures-${{ matrix.shard }}.jsonl"
+
+      - name: Shard sonucunu yükle
+        uses: actions/upload-artifact@v4
+        with:
+          name: shard-${{ matrix.shard }}
+          path: |
+            cache-${{ matrix.shard }}.jsonl
+            failures-${{ matrix.shard }}.jsonl
+            llama-server-${{ matrix.shard }}.log
+          retention-days: 7
+          if-no-files-found: error
+
+  merge:
+    needs: translate
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: shard-*
+          path: caches
+          merge-multiple: true
+
+      - name: Birleştir ve doğrula
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 merge.py input/strings_de-DE.csv BATTLETECH_strings_tr-TR.csv caches
+          python3 validate.py input/strings_de-DE.csv BATTLETECH_strings_tr-TR.csv
+          cat caches/failures-*.jsonl > BATTLETECH_ceviri_notlari.jsonl || true
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('BATTLETECH_strings_tr-TR.csv')
+          b=p.read_bytes()
+          assert not b.startswith(b'\xef\xbb\xbf'), 'Beklenmeyen BOM'
+          assert b.endswith(b'\n'), 'Son LF eksik'
+          assert b'\r\n' not in b, 'CRLF oluşmuş'
+          print('Kodlama/satır sonu: UTF-8 BOM yok, LF, son LF var')
+          PY
+
+      - name: Nihai Türkçe yamayı yükle
+        uses: actions/upload-artifact@v4
+        with:
+          name: BATTLETECH_Turkce_Yama
+          path: |
+            BATTLETECH_strings_tr-TR.csv
+            validation_warnings.txt
+            BATTLETECH_ceviri_notlari.jsonl
+          retention-days: 30
+          if-no-files-found: warn
