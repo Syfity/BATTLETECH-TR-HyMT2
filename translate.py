@@ -13,14 +13,15 @@ SIMPLE_TECH_BRACKET_RE = re.compile(r'''\[(?:durationRemaining|pluralDurationTyp
 LINK_PREFIX_RE = re.compile(r'''\[\[.*?\x1f''')
 
 STYLE = (
-    "BATTLETECH (2018) için profesyonel Türkçe oyun yerelleştirmesi. Askerî bilimkurgu, paralı askerlik ve taktik savaş tonu. "
-    "Arayüz kısa ve doğal; diyaloglar karaktere ve rütbeye uygun; anlatı akıcı Türkçe olmalı. "
-    "BattleTech evrenindeki özel adları ve kanonik ürün/araç/karakter/gezegen adlarını çevirmeyin."
+    "BATTLETECH (2018) için resmî yerelleştirme kalitesinde doğal Türkçe kullan. "
+    "Arayüz kısa ve eylem odaklı; askerî emirler kısa ve sert; diyaloglar konuşmacının rütbesi ve sahne tonuna uygun; "
+    "lore metinleri akıcı ve inandırıcı bilimkurgu Türkçesiyle yazılmalı. Kelime kelime Almanca söz dizimini taşıma. "
+    "Cinsiyet veya özne kaynağın desteklemediği yerde uydurulmasın. BattleTech evreninin kanonik özel adları korunmalı."
 )
 CONTEXT = (
-    "BATTLETECH by Harebrained Schemes, 3025 döneminde geçer. Oyuncu bir paralı asker birliğini ve BattleMech'leri yönetir. "
-    "Bağlam: Inner Sphere, Periphery, Great Houses, Aurigan Reach, House Arano, Aurigan Restoration; MechWarrior, BattleMech, "
-    "lance, salvage, contracts, heat, armor, stability ve benzeri BattleTech terminolojisi."
+    "Harebrained Schemes'in BATTLETECH oyunu, 3025. Oyuncu bir paralı asker birliği ve BattleMech'ler yönetir. "
+    "Evren: Inner Sphere, Periphery, Great Houses, Aurigan Reach, House Arano, Aurigan Restoration; "
+    "MechWarrior, lance, salvage, contracts, heat, armor, stability ve benzeri BattleTech terminolojisi."
 )
 
 def is_non_player(key: str, text: str) -> bool:
@@ -30,25 +31,31 @@ def is_non_player(key: str, text: str) -> bool:
 
 def _mask_regex(text, regex, tokens):
     def repl(m):
-        idx=len(tokens); tokens.append(m.group(0)); return f"__BT_PH_{idx:04d}__"
-    return regex.sub(repl, text)
+        i=len(tokens); tokens.append(m.group(0)); return f"__BT_PH_{i:04d}__"
+    return regex.sub(repl,text)
 
 def mask_tokens(text: str):
     tokens=[]
-    text=_mask_regex(text, LINK_PREFIX_RE, tokens)
+    text=_mask_regex(text,LINK_PREFIX_RE,tokens)
     def close_repl(m):
-        idx=len(tokens); tokens.append(m.group(0)); return f"__BT_PH_{idx:04d}__"
-    text=re.sub(r'\]\]', close_repl, text)
-    for rx in (URL_RE, HTML_TAG_RE, BRACE_RE, PRINTF_RE, ESCAPE_RE, SIMPLE_TECH_BRACKET_RE):
-        text=_mask_regex(text, rx, tokens)
+        i=len(tokens); tokens.append(m.group(0)); return f"__BT_PH_{i:04d}__"
+    text=re.sub(r'\]\]',close_repl,text)
+    for rx in (URL_RE,HTML_TAG_RE,BRACE_RE,PRINTF_RE,ESCAPE_RE,SIMPLE_TECH_BRACKET_RE):
+        text=_mask_regex(text,rx,tokens)
     def sep_repl(_m):
-        idx=len(tokens); tokens.append(CTRL_SEP); return f"__BT_PH_{idx:04d}__"
-    text=re.sub(CTRL_SEP, sep_repl, text)
+        i=len(tokens); tokens.append(CTRL_SEP); return f"__BT_PH_{i:04d}__"
+    text=re.sub(CTRL_SEP,sep_repl,text)
     return text,tokens
 
-def unmask(text: str, tokens):
+def remask_with_tokens(text: str, tokens):
     out=text
-    for i,tok in enumerate(tokens): out=out.replace(f"__BT_PH_{i:04d}__", tok)
+    for i,tok in enumerate(tokens):
+        out=out.replace(tok,f"__BT_PH_{i:04d}__",1)
+    return out
+
+def unmask(text: str,tokens):
+    out=text
+    for i,tok in enumerate(tokens): out=out.replace(f"__BT_PH_{i:04d}__",tok)
     return out
 
 def structure_signature(text: str):
@@ -60,65 +67,80 @@ def structure_signature(text: str):
     sig += [('url',x) for x in URL_RE.findall(text)]
     sig += [('techbr',x) for x in SIMPLE_TECH_BRACKET_RE.findall(text)]
     sig += [('link',x) for x in LINK_PREFIX_RE.findall(text)]
-    sig += [('linkclose',']]') for _ in re.finditer(r'\]\]', text)]
+    sig += [('linkclose',']]') for _ in re.finditer(r'\]\]',text)]
     sig += [('sep',CTRL_SEP) for _ in range(text.count(CTRL_SEP))]
     return sorted(sig)
 
 def relevant_glossary(src: str, glossary: dict):
-    low=src.casefold(); items=[]
+    low=src.casefold(); out=[]
     for k,v in glossary.items():
-        if k.casefold() in low: items.append(f"{k} translates to {v}")
-    return items[:60]
+        if k.casefold() in low: out.append(f"{k} -> {v}")
+    return out[:60]
 
 def build_prompt(src: str, glossary: dict):
     terms='\n'.join(relevant_glossary(src,glossary))
     return (
-        f"[Background Information]\n{CONTEXT}\n\n"
-        f"[Source Text]\n{src}\n\n"
-        f"[Translation Tasks]\n"
-        f"1. Translate the German [Source Text] into Turkish.\n"
-        f"2. Translation style must strictly conform to: {STYLE}\n"
-        f"3. Every token matching __BT_PH_XXXX__ is protected technical data. Copy every protected token exactly once and never translate, remove, reorder, split, or modify it.\n"
-        f"4. Preserve numbers, percentages and measurement values unless Turkish punctuation is clearly user-facing prose.\n"
-        + (f"5. Reference terminology:\n{terms}\n" if terms else "") +
-        f"6. Output ONLY the Turkish translation without explanations, labels, quotation wrappers, or commentary."
+        f"[Background Information]\n{CONTEXT}\n\n[Source Text]\n{src}\n\n[Translation Tasks]\n"
+        f"1. Translate the German Source Text into Turkish.\n2. Style: {STYLE}\n"
+        f"3. Tokens __BT_PH_XXXX__ are immutable technical data. Copy every token exactly once, in the same order. Never translate or edit them.\n"
+        f"4. Preserve numerical values, percentages, units and gameplay meaning exactly.\n"
+        f"5. Do not translate product, weapon, vehicle, character, planet, company or canonical universe names unless the terminology explicitly gives a Turkish form.\n"
+        + (f"6. Terminology:\n{terms}\n" if terms else "") +
+        f"7. Output ONLY the Turkish translation; no explanations, labels or quotation wrappers."
     )
 
-def api_completion(server, prompt, max_tokens=4096, timeout=900):
+def build_review_prompt(src_masked: str, draft_masked: str, glossary: dict):
+    terms='\n'.join(relevant_glossary(src_masked,glossary))
+    return (
+        f"[Background Information]\n{CONTEXT}\n\n[German Source]\n{src_masked}\n\n[Turkish Draft]\n{draft_masked}\n\n"
+        f"[Quality Review Tasks]\n1. Compare the Turkish Draft against the German Source for meaning, omissions, additions, tone and terminology.\n"
+        f"2. Rewrite any awkward or machine-translated Turkish into natural, official-game-quality Turkish. Style: {STYLE}\n"
+        f"3. Preserve all gameplay values and technical tokens. Every __BT_PH_XXXX__ token must appear exactly once and in the same order.\n"
+        f"4. Do not invent gender, subject, facts or lore. Preserve canonical BattleTech proper names.\n"
+        + (f"5. Terminology:\n{terms}\n" if terms else "") +
+        f"6. Output ONLY the final corrected Turkish text."
+    )
+
+def api_completion(server,prompt,max_tokens=4096,timeout=900):
     payload={"model":"Hy-MT2-7B","messages":[{"role":"user","content":prompt}],"temperature":0.7,"top_p":0.6,"top_k":20,"repeat_penalty":1.05,"max_tokens":max_tokens,"stream":False}
-    data=json.dumps(payload,ensure_ascii=False).encode('utf-8')
-    req=urllib.request.Request(server.rstrip('/')+'/v1/chat/completions',data=data,headers={'Content-Type':'application/json'},method='POST')
+    req=urllib.request.Request(server.rstrip('/')+'/v1/chat/completions',data=json.dumps(payload,ensure_ascii=False).encode('utf-8'),headers={'Content-Type':'application/json'},method='POST')
     with urllib.request.urlopen(req,timeout=timeout) as r: obj=json.loads(r.read().decode('utf-8'))
     return obj['choices'][0]['message']['content'].strip()
 
 def clean_output(text: str):
-    out=text.strip()
-    out=re.sub(r'^```(?:text|turkish|tr)?\s*','',out,flags=re.I)
-    out=re.sub(r'\s*```$','',out)
-    out=re.sub(r'^\s*(?:Çeviri|Türkçe|Translation)\s*:\s*','',out,flags=re.I)
+    out=text.strip(); out=re.sub(r'^```(?:text|turkish|tr)?\s*','',out,flags=re.I); out=re.sub(r'\s*```$','',out)
+    out=re.sub(r'^\s*(?:Çeviri|Türkçe|Translation|Final)\s*:\s*','',out,flags=re.I)
     return out.strip()
 
-def translate_one(server, de, glossary):
-    masked,tokens=mask_tokens(de); prompt=build_prompt(masked,glossary); last=''
+def valid_result(src,tr): return bool(tr.strip()) and structure_signature(src)==structure_signature(tr)
+
+def translate_one(server,de,glossary):
+    masked,tokens=mask_tokens(de); last=''; draft=None
     for attempt in range(3):
         try:
-            if attempt==0: tr=api_completion(server,prompt)
-            else:
-                repair=("Translate the following German BATTLETECH game text into natural Turkish. Output ONLY the translation. Every __BT_PH_XXXX__ token is immutable: copy all of them exactly once and do not reorder them.\n\n"+masked)
-                tr=api_completion(server,repair)
-            tr=unmask(clean_output(tr),tokens)
-            if tr and structure_signature(de)==structure_signature(tr): return tr,None
+            prompt=build_prompt(masked,glossary) if attempt==0 else ("Translate this German BATTLETECH player-facing game text into natural Turkish. Preserve every __BT_PH_XXXX__ token exactly once and in order. Output only Turkish:\n"+masked)
+            candidate=unmask(clean_output(api_completion(server,prompt)),tokens)
+            if valid_result(de,candidate): draft=candidate; break
         except Exception as e:
             last=str(e); time.sleep(2*(attempt+1))
-    return de,last or 'Yapısal doğrulama başarısız'
+    if draft is None: return de,last or 'İlk çeviri yapısal doğrulamadan geçmedi'
+
+    # Master prompt requires a second source-vs-target language/context review for every player-visible string.
+    try:
+        draft_masked=remask_with_tokens(draft,tokens)
+        reviewed=unmask(clean_output(api_completion(server,build_review_prompt(masked,draft_masked,glossary))),tokens)
+        if valid_result(de,reviewed): return reviewed,None
+        return draft,'İkinci dil kontrolü teknik yapıyı bozduğu için doğrulanmış ilk taslak korundu'
+    except Exception as e:
+        return draft,'İkinci dil kontrolü çalışmadı; doğrulanmış ilk taslak korundu: '+str(e)
 
 def load_cache(path):
     cache={}; p=Path(path)
-    if not p.exists(): return cache
-    for line in p.read_text(encoding='utf-8').splitlines():
-        try:
-            o=json.loads(line); cache[o['h']]=o['tr']
-        except Exception: pass
+    if p.exists():
+        for line in p.read_text(encoding='utf-8').splitlines():
+            try:
+                o=json.loads(line); cache[o['h']]=o['tr']
+            except Exception: pass
     return cache
 
 def main():
@@ -141,9 +163,9 @@ def main():
             try: tr,err=fut.result()
             except Exception as e: tr,err=de,str(e)
             cache[h]=tr; cache_f.write(json.dumps({'h':h,'de':de,'tr':tr},ensure_ascii=False)+'\n'); cache_f.flush()
-            if err: fail_f.write(json.dumps({'h':h,'de':de,'error':err},ensure_ascii=False)+'\n'); fail_f.flush()
+            if err: fail_f.write(json.dumps({'h':h,'de':de,'tr':tr,'note':err},ensure_ascii=False)+'\n'); fail_f.flush()
             done+=1
-            if done%25==0 or done==len(pending): print(f"shard {args.shard}: {done}/{len(pending)}",flush=True)
+            if done%20==0 or done==len(pending): print(f"shard {args.shard}: {done}/{len(pending)}",flush=True)
     cache_f.close(); fail_f.close()
 
 if __name__=='__main__': main()
